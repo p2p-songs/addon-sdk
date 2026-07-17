@@ -23,6 +23,17 @@ Full architecture: [`p2p-songs/.github` — `docs/IMPLEMENTATION_PLAN.md`](https
   is how `stream-debrid` (in the `addons` repo) gets its debrid
   credentials and indexer settings without any server-side account system.
 
+## Stream object: optional link-expiry hint (audit re-audit, 2026-07-17)
+The stream object's `behaviorHints` carries an **optional** expiry hint for
+resolved (debrid/CDN) URLs — `expiresAt` (absolute UTC ISO-8601) **or**
+`maxAgeSeconds` (int). The SDK must **validate its shape when present** and
+leave it absent otherwise. It is a *hint only*: the player's freshness
+guarantee is re-resolve-on-failure, never trust in this field (see
+IMPLEMENTATION_PLAN §8 "Link expiry" and player ARCHITECTURE §5a). This exists
+because the player has no neutral way to know when a debrid link dies without
+parsing provider URL formats (which would break addon-neutrality) — so the
+addon, which does know, optionally tells it.
+
 ## Decided: this repo owns the canonical protocol types
 The addon protocol's TypeScript types (manifest, stream object, resource
 shapes) are the wire contract shared by addons *and* the player. Decision
