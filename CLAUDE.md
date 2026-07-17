@@ -23,6 +23,17 @@ Full architecture: [`p2p-songs/.github` — `docs/IMPLEMENTATION_PLAN.md`](https
   is how `stream-debrid` (in the `addons` repo) gets its debrid
   credentials and indexer settings without any server-side account system.
 
+## Decided: this repo owns the canonical protocol types
+The addon protocol's TypeScript types (manifest, stream object, resource
+shapes) are the wire contract shared by addons *and* the player. Decision
+(from `player/docs/ARCHITECTURE.md` §8/§9): **one source of truth, and it
+lives here** — exported as a types-only `@p2p-songs/protocol` package. The
+`player` repo consumes it (pinned git dependency pre-1.0, published package
+at protocol v1). When this repo is planned/built in detail, define that
+package first; the SDK's handler signatures and the player's addon client
+both build on it. Don't let a second copy of these types grow in the player
+or addons repos.
+
 ## Status
 Scaffolding only (this file + README). No SDK code yet. Next: Phase 2 —
 ship a "hello world" addon in <20 lines using the SDK, and a "hello
