@@ -27,3 +27,8 @@ Full architecture: [`p2p-songs/.github` — `docs/IMPLEMENTATION_PLAN.md`](https
 Scaffolding only (this file + README). No SDK code yet. Next: Phase 2 —
 ship a "hello world" addon in <20 lines using the SDK, and a "hello
 configurable world" addon proving the `/configure` round-trip.
+
+## Being audited?
+If you're the adversarial reviewer, not the implementer: start at
+[`p2p-songs/.github` — `docs/ADVERSARIAL_REVIEW_CONTRACT.md`](https://github.com/p2p-songs/.github/blob/main/docs/ADVERSARIAL_REVIEW_CONTRACT.md),
+not this file.
