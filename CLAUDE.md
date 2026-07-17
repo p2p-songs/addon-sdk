@@ -10,6 +10,11 @@ read back out of the URL path on every request).
 
 Full architecture: [`p2p-songs/.github` — `docs/IMPLEMENTATION_PLAN.md`](https://github.com/p2p-songs/.github/blob/main/docs/IMPLEMENTATION_PLAN.md), §1, §7, §8, §10 (Phase 2).
 
+## Before implementation
+Read `../.github/docs/audits/README.md` and its first (latest) report before
+starting work. The registry owns current sign-off and supersession; do not rely
+only on issue notifications.
+
 ## Invariants this repo must hold (see `.github`'s `docs/REVIEW_CHECKLIST.md` §1, §6)
 - Purely transport/protocol tooling — content-agnostic, no assumptions
   about what kind of stream source an addon built with it uses.
