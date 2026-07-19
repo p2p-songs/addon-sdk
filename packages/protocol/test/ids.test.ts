@@ -5,6 +5,7 @@ import {
   safeParseId,
   formatMbid,
   isEntity,
+  isPlaylistId,
   recordingIdSchema,
   trackIdSchema,
   ProtocolError,
@@ -32,6 +33,17 @@ describe("entity-typed MBID parsing/formatting", () => {
 
   it("parses ISRC", () => {
     expect(parseId(ISRC)).toEqual({ scheme: "isrc", code: "USRC17607839" });
+  });
+
+  it("parses a playlist id (addon-scoped opaque token)", () => {
+    expect(parseId("playlist:charts.trending-2026")).toEqual({
+      scheme: "playlist",
+      token: "charts.trending-2026",
+    });
+    expect(isPlaylistId("playlist:charts.trending-2026")).toBe(true);
+    // colon-bearing / MBID-looking tokens are not valid playlist ids
+    expect(() => parseId("playlist:a:b")).toThrow(ProtocolError);
+    expect(isPlaylistId("mbid:recording:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")).toBe(false);
   });
 
   it("formats and round-trips, lowercasing the uuid", () => {

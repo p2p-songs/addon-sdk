@@ -1,6 +1,7 @@
 /** Addon manifest (Plan §8). Describes what an addon serves and how it's called. */
 import { z } from "zod";
 import { contentTypeSchema } from "./meta.js";
+import { httpsUrlSchema } from "./url.js";
 
 export const RESOURCES = ["catalog", "meta", "stream", "lyrics"] as const;
 export type Resource = (typeof RESOURCES)[number];
@@ -51,8 +52,8 @@ export const manifestSchema = z
     idPrefixes: z.array(z.string()).optional(),
     catalogs: z.array(catalogDefSchema).default([]),
     behaviorHints: manifestBehaviorHintsSchema.optional(),
-    logo: z.string().url().optional(),
-    background: z.string().url().optional(),
+    logo: httpsUrlSchema.optional(),
+    background: httpsUrlSchema.optional(),
     contactEmail: z.string().email().optional(),
   })
   .passthrough();

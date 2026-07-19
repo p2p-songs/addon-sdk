@@ -18,17 +18,24 @@ only on issue notifications.
 ## Invariants this repo must hold (see `.github`'s `docs/REVIEW_CHECKLIST.md` §1, §6)
 - Purely transport/protocol tooling — content-agnostic, no assumptions
   about what kind of stream source an addon built with it uses.
-- Must actually implement the protocol as specced (Plan §8), not a
-  simplified subset: content types `artist`/`album`/`track`/`playlist`;
-  resources `catalog`/`meta`/`stream`/`lyrics`; **entity-typed** IDs
-  `mbid:<entity>:<uuid>` (entity ∈ `artist`/`release`/`recording`/`track`),
-  `isrc:` secondary. `stream`/`lyrics` are keyed by `mbid:recording:<uuid>`
-  (the streamable unit); `mbid:track:<uuid>` is album context only. The old
-  synthetic `mbid:<release-mbid>:<track-number>` form is **removed** — it
-  collides across discs (track position is medium-scoped) and breaks on
-  free-text vinyl numbers (audit A-003). The SDK's schema tests must include
-  multi-disc / vinyl-free-text / bonus-disc / same-recording-on-two-releases
+- Must actually implement the protocol as specced (`docs/PROTOCOL.md`, the
+  standalone v0.1 wire spec; Plan §8), not a simplified subset: content types
+  `artist`/`album`/`track`/`playlist`; resources `catalog`/`meta`/`stream`/`lyrics`;
+  **entity-typed** IDs `mbid:<entity>:<uuid>` (entity ∈
+  `artist`/`release`/`recording`/`track`), `isrc:` secondary, `playlist:<token>`
+  (addon-scoped opaque, no colon) for playlists. `stream`/`lyrics` are keyed by
+  `mbid:recording:<uuid>` (the streamable unit); `mbid:track:<uuid>` is album
+  context only. The old synthetic `mbid:<release-mbid>:<track-number>` form is
+  **removed** — it collides across discs (track position is medium-scoped) and
+  breaks on free-text vinyl numbers (audit A-003). The SDK's schema tests must
+  include multi-disc / vinyl-free-text / bonus-disc / same-recording-on-two-releases
   fixtures.
+- **Content type ↔ id identity is enforced** (`meta` is a discriminated union:
+  `artist`→artist MBID, `album`→release MBID, `track`→recording MBID/ISRC,
+  `playlist`→playlist id) and **every resource URL is `https://`** (`stream.url`,
+  `lyric.url`, `poster`, `logo`, `background`; `ytId`/`infoHash` exempt). Audit
+  A-004 — don't loosen either back to bare `z.string().url()` or an unconstrained
+  `id`.
 - The `/configure` mechanism must round-trip: encode config into the
   manifest URL path, decode it back out on every subsequent request — this
   is how `stream-debrid` (in the `addons` repo) gets its debrid
@@ -64,11 +71,14 @@ This repo is a **pnpm workspace**. `packages/protocol` = `@p2p-songs/protocol`
 TypeScript, zod, vitest.
 
 ## Status
-`packages/protocol` implemented (entity-typed MBID schemas + parse/format,
-stream/lyrics/meta/catalog resource shapes, manifest, expiry hint) with vitest
-tests incl. the A-003 identity fixtures. Next: Phase 2 —
-ship a "hello world" addon in <20 lines using the SDK, and a "hello
-configurable world" addon proving the `/configure` round-trip.
+`packages/protocol` implemented (entity-typed MBID + ISRC + playlist schemas +
+parse/format, https-only resource URLs, type↔id discriminated-union meta,
+stream/lyrics/catalog shapes, manifest, expiry hint) with 46 vitest tests incl.
+the A-003 identity fixtures and the A-004 bonus-disc/multi-disc fixture. The
+standalone wire spec is `docs/PROTOCOL.md` (v0.1). Audits A-003 and A-004 are
+reconciled. Next: Phase 2 — the SDK (`packages/sdk`): `addonBuilder`, handlers,
+CORS router, `/configure` round-trip; ship a "hello world" addon in <20 lines
+and a "hello configurable world" addon.
 
 ## Being audited?
 If you're the adversarial reviewer, not the implementer: start at

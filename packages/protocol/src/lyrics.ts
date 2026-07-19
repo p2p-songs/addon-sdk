@@ -1,12 +1,13 @@
 /** Lyrics resource — the p2p-songs analog of Stremio's subtitles (Plan §8). */
 import { z } from "zod";
+import { httpsUrlSchema } from "./url.js";
 
 export const lyricSchema = z
   .object({
     id: z.string(),
     /** BCP-47 / ISO language code, e.g. "eng". */
     lang: z.string().min(2),
-    url: z.string().url(),
+    url: httpsUrlSchema,
     /** true if the resource is time-synced (.lrc), false/absent for plain text. */
     synced: z.boolean().optional(),
   })

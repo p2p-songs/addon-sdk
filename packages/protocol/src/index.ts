@@ -11,6 +11,7 @@ export const PROTOCOL_VERSION = "0.1.0";
 
 export { ProtocolError } from "./errors.js";
 export * from "./ids.js";
+export * from "./url.js";
 export * from "./stream.js";
 export * from "./requests.js";
 export * from "./lyrics.js";

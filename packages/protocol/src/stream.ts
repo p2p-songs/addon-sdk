@@ -1,5 +1,6 @@
 /** Stream resource — the shapes an addon returns from `/stream` (Plan §8). */
 import { z } from "zod";
+import { httpsUrlSchema } from "./url.js";
 
 /**
  * behaviorHints, including the OPTIONAL link-expiry hint for resolved
@@ -41,7 +42,7 @@ const INFOHASH_RE = /^[0-9a-fA-F]{40}$/;
  */
 export const streamSchema = z
   .object({
-    url: z.string().url().optional(),
+    url: httpsUrlSchema.optional(),
     ytId: z.string().optional(),
     infoHash: z.string().regex(INFOHASH_RE, "expected a 40-char hex infoHash").optional(),
     fileIdx: z.number().int().nonnegative().optional(),
