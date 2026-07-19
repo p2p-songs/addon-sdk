@@ -64,11 +64,20 @@ at protocol v1). This package is built **first** (it's the foundation the SDK,
 addons, and player addon-client all import); don't let a second copy of these
 types grow elsewhere.
 
-## Structure (as of first implementation, 2026-07-18)
+## Structure (as of Phase 2, 2026-07-19)
 This repo is a **pnpm workspace**. `packages/protocol` = `@p2p-songs/protocol`
 (the contract, built first). `packages/sdk` = `@p2p-songs/addon-sdk`
-(`addonBuilder`, handlers, router — depends on protocol) comes next. Tooling:
-TypeScript, zod, vitest.
+(`AddonBuilder`, typed handlers, framework-agnostic CORS `createRouter`,
+`serveHTTP` node adapter, `/configure` round-trip via `encodeConfig`/`decodeConfig`
++ default page). The SDK **re-exports `@p2p-songs/protocol`** so addon authors
+take one dependency. Tooling: TypeScript, zod, vitest.
+
+Router invariants (don't regress): CORS on every response + `OPTIONS` 204;
+leading non-reserved path segment = base64url config → `config` handler arg;
+`stream`/`lyrics` keyed by a validated `mbid:recording:` id (400 otherwise),
+album context from `<extra>`; every handler response validated against the
+protocol response schema (a bad response is the addon's bug → 500); cache hints
+→ `Cache-Control`.
 
 ## Status
 `packages/protocol` implemented (entity-typed MBID + ISRC + playlist schemas +
@@ -76,9 +85,14 @@ parse/format, https-only resource URLs, type↔id discriminated-union meta,
 stream/lyrics/catalog shapes, manifest, expiry hint) with 46 vitest tests incl.
 the A-003 identity fixtures and the A-004 bonus-disc/multi-disc fixture. The
 standalone wire spec is `docs/PROTOCOL.md` (v0.1). Audits A-003 and A-004 are
-reconciled. Next: Phase 2 — the SDK (`packages/sdk`): `addonBuilder`, handlers,
-CORS router, `/configure` round-trip; ship a "hello world" addon in <20 lines
-and a "hello configurable world" addon.
+reconciled. **Phase 2 (`packages/sdk`, `@p2p-songs/addon-sdk`) implemented
+2026-07-19:** `AddonBuilder` + typed handlers, framework-agnostic `createRouter`,
+`serveHTTP`, `/configure` round-trip; 22 vitest tests (config round-trip, builder
+guards, router routing/validation/CORS, live `serveHTTP` hello-world over HTTP).
+68 tests total across the workspace; typecheck + build green. **Not yet audited**
+(A-005 would be the SDK's first audit). Next: Phase 3 — reference addons in the
+`addons` repo (`stream-legal` first — no debrid/config, gives the first
+end-to-end slice).
 
 ## Being audited?
 If you're the adversarial reviewer, not the implementer: start at

@@ -220,9 +220,13 @@ server-side account system. Concretely, the configured install URL looks like
 with `configurationRequired: true` should refuse to serve resources (or serve
 empty) until configured.
 
-The exact encoding of `<encoded-config>` is defined by the SDK's `/configure`
-helper (`@p2p-songs/addon-sdk`, Phase 2) and documented there; the protocol only
-requires that it round-trips and never leaves the URL path.
+`<encoded-config>` is the **base64url of the config JSON** (no `/`, no `=`
+padding, so it is a single path-safe segment). The router treats a leading path
+segment that is not one of the reserved roots (`manifest.json`, `configure`,
+`catalog`, `meta`, `stream`, `lyrics`) as this config segment, decodes it, and
+passes the object to handlers as `config`. `@p2p-songs/addon-sdk` provides
+`encodeConfig` / `decodeConfig` and a default `/configure` page that builds the
+install URL. The config never leaves the URL path — no cookies, no server state.
 
 ---
 

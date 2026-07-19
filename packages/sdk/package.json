@@ -1,0 +1,29 @@
+{
+  "name": "@p2p-songs/addon-sdk",
+  "version": "0.1.0",
+  "description": "SDK for building p2p-songs addons: addonBuilder, typed resource handlers, a CORS'd HTTP router, and a /configure round-trip helper. The music equivalent of stremio-addon-sdk.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@p2p-songs/protocol": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
