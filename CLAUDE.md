@@ -45,19 +45,28 @@ because the player has no neutral way to know when a debrid link dies without
 parsing provider URL formats (which would break addon-neutrality) — so the
 addon, which does know, optionally tells it.
 
-## Decided: this repo owns the canonical protocol types
-The addon protocol's TypeScript types (manifest, stream object, resource
-shapes) are the wire contract shared by addons *and* the player. Decision
-(from `player/docs/ARCHITECTURE.md` §8/§9): **one source of truth, and it
-lives here** — exported as a types-only `@p2p-songs/protocol` package. The
+## Decided: this repo owns the canonical protocol contract
+The addon protocol (manifest, stream object, resource shapes, entity-typed
+IDs) is the wire contract shared by addons *and* the player. Decision (from
+`player/docs/ARCHITECTURE.md` §8/§9): **one source of truth, and it lives
+here** — the **schema-first** `@p2p-songs/protocol` package: zod schemas are
+the source of truth, TS types are `z.infer`red, runtime validators come free.
+Zero heavy deps; the player can `import type` at zero runtime cost. The
 `player` repo consumes it (pinned git dependency pre-1.0, published package
-at protocol v1). When this repo is planned/built in detail, define that
-package first; the SDK's handler signatures and the player's addon client
-both build on it. Don't let a second copy of these types grow in the player
-or addons repos.
+at protocol v1). This package is built **first** (it's the foundation the SDK,
+addons, and player addon-client all import); don't let a second copy of these
+types grow elsewhere.
+
+## Structure (as of first implementation, 2026-07-18)
+This repo is a **pnpm workspace**. `packages/protocol` = `@p2p-songs/protocol`
+(the contract, built first). `packages/sdk` = `@p2p-songs/addon-sdk`
+(`addonBuilder`, handlers, router — depends on protocol) comes next. Tooling:
+TypeScript, zod, vitest.
 
 ## Status
-Scaffolding only (this file + README). No SDK code yet. Next: Phase 2 —
+`packages/protocol` implemented (entity-typed MBID schemas + parse/format,
+stream/lyrics/meta/catalog resource shapes, manifest, expiry hint) with vitest
+tests incl. the A-003 identity fixtures. Next: Phase 2 —
 ship a "hello world" addon in <20 lines using the SDK, and a "hello
 configurable world" addon proving the `/configure` round-trip.
 
