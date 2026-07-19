@@ -20,9 +20,15 @@ only on issue notifications.
   about what kind of stream source an addon built with it uses.
 - Must actually implement the protocol as specced (Plan §8), not a
   simplified subset: content types `artist`/`album`/`track`/`playlist`;
-  resources `catalog`/`meta`/`stream`/`lyrics`; ID scheme
-  `mbid:<uuid>` / `mbid:<release-mbid>:<track-number>`, `isrc:` as
-  secondary `idPrefix`.
+  resources `catalog`/`meta`/`stream`/`lyrics`; **entity-typed** IDs
+  `mbid:<entity>:<uuid>` (entity ∈ `artist`/`release`/`recording`/`track`),
+  `isrc:` secondary. `stream`/`lyrics` are keyed by `mbid:recording:<uuid>`
+  (the streamable unit); `mbid:track:<uuid>` is album context only. The old
+  synthetic `mbid:<release-mbid>:<track-number>` form is **removed** — it
+  collides across discs (track position is medium-scoped) and breaks on
+  free-text vinyl numbers (audit A-003). The SDK's schema tests must include
+  multi-disc / vinyl-free-text / bonus-disc / same-recording-on-two-releases
+  fixtures.
 - The `/configure` mechanism must round-trip: encode config into the
   manifest URL path, decode it back out on every subsequent request — this
   is how `stream-debrid` (in the `addons` repo) gets its debrid
