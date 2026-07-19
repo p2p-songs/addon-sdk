@@ -79,6 +79,19 @@ album context from `<extra>`; every handler response validated against the
 protocol response schema (a bad response is the addon's bug → 500); cache hints
 → `Cache-Control`.
 
+**Security posture at this boundary (audit A-005 — do NOT loosen):** the router
+is the credential-carrying trust boundary every addon inherits.
+- A request with a config segment is **secret-bearing** → manifest, configure,
+  and resource responses are `Cache-Control: no-store, private`, never public.
+- Client error bodies are **opaque** (`{ err }` only) — a handler/provider
+  exception message can contain the debrid key, so it never reaches the client;
+  diagnostics go only to the opt-in `onError` hook (implementer redacts).
+- Route content `type` is validated: `stream`/`lyrics` require `track`,
+  `catalog`/`meta` require a protocol `ContentType`, else 404.
+- `configurationRequired` **fails closed** (400 without a valid config); a
+  malformed config prefix is a 400, not a silent downgrade.
+- Malformed percent-encoding → controlled 400, never an escaped `URIError`/500.
+
 ## Status
 `packages/protocol` implemented (entity-typed MBID + ISRC + playlist schemas +
 parse/format, https-only resource URLs, type↔id discriminated-union meta,
@@ -89,10 +102,15 @@ reconciled. **Phase 2 (`packages/sdk`, `@p2p-songs/addon-sdk`) implemented
 2026-07-19:** `AddonBuilder` + typed handlers, framework-agnostic `createRouter`,
 `serveHTTP`, `/configure` round-trip; 22 vitest tests (config round-trip, builder
 guards, router routing/validation/CORS, live `serveHTTP` hello-world over HTTP).
-68 tests total across the workspace; typecheck + build green. **Not yet audited**
-(A-005 would be the SDK's first audit). Next: Phase 3 — reference addons in the
-`addons` repo (`stream-legal` first — no debrid/config, gives the first
-end-to-end slice).
+68 tests total across the workspace; typecheck + build green. **Audit A-005
+(SDK's first audit) reconciled 2026-07-19** — 2 critical + 3 medium boundary
+findings fixed: secret-bearing paths are `no-store, private` (never public);
+error bodies opaque + `onError` diagnostics hook; route content types validated;
+`configurationRequired` fails closed + malformed config → 400; malformed
+percent-encoding → 400. 32 SDK tests (10 new A-005 regressions in
+`test/security.test.ts`); 78 total; built-package probes green. Next: Phase 3 —
+reference addons in the `addons` repo (`stream-legal` first — no debrid/config,
+gives the first end-to-end slice).
 
 ## Being audited?
 If you're the adversarial reviewer, not the implementer: start at

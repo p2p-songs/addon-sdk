@@ -4,11 +4,21 @@
  * particular server — `serveHTTP` is a thin node:http adapter over this, and
  * tests drive it directly.
  *
- * Responsibilities: CORS on every response, `OPTIONS` preflight, stripping the
- * optional leading `/configure` config segment, routing the manifest + resource
- * routes, keying stream/lyrics by recording (validated against the protocol
- * request schemas), validating each handler's response against the protocol
- * response schemas, and mapping cache hints to `Cache-Control`.
+ * Security posture (this is the credential-carrying trust boundary every addon
+ * inherits — audit A-005):
+ * - A request whose path carries a leading config segment is **secret-bearing**
+ *   (the segment encodes the user's debrid credential). Its manifest, configure,
+ *   and resource responses are always `Cache-Control: no-store, private` — never
+ *   shared/public caching, regardless of a handler's cache hints.
+ * - Client error bodies are **opaque** (a stable `err` string, never a handler
+ *   or provider exception message, which can contain the credential). Diagnostics
+ *   go only to the opt-in `onError` hook, whose implementer is responsible for
+ *   redaction.
+ * - A malformed config prefix is a 400, not a silent downgrade to unconfigured;
+ *   `configurationRequired` addons fail **closed** (handler never runs without a
+ *   valid config).
+ * - Route content types are validated (stream/lyrics require `track`); malformed
+ *   percent-encoding becomes a controlled 400, never an escaped `URIError`.
  */
 import {
   catalogResponseSchema,
@@ -17,6 +27,8 @@ import {
   lyricsResponseSchema,
   streamRequestSchema,
   lyricsRequestSchema,
+  contentTypeSchema,
+  type ContentType,
 } from "@p2p-songs/protocol";
 import type { ZodTypeAny } from "zod";
 import { decodeConfig, RESERVED_ROOT_SEGMENTS, type AddonConfig } from "./config.js";
@@ -36,9 +48,23 @@ export interface RouterResponse {
   body: string;
 }
 
+export interface RouterErrorContext {
+  /** The resource being served, if the failure occurred during dispatch. */
+  resource?: string;
+  /** The request path (may contain a config segment — treat as secret-bearing). */
+  path: string;
+}
+
 export interface RouterOptions {
   /** Render the `/configure` HTML page. Defaults to a built-in page. */
   configureHTML?: (ctx: { config?: AddonConfig; manifest: AddonInterface["manifest"] }) => string;
+  /**
+   * Optional diagnostics sink for server-side failures. Receives the raw error
+   * (which MAY contain the configured credential) — the implementer is
+   * responsible for redaction before logging. The SDK never logs errors itself,
+   * and never sends error detail to the client.
+   */
+  onError?: (err: unknown, ctx: RouterErrorContext) => void;
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -47,11 +73,18 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "*",
 };
 
+/** Caching policy for responses whose request URL carries a secret config segment. */
+const NO_STORE: Record<string, string> = { "Cache-Control": "no-store, private" };
+
+/** Raised for malformed input that must surface as a controlled 400. */
+class BadRequestError extends Error {}
+
 export type Router = (req: RouterRequest) => Promise<RouterResponse>;
 
 /** Build a router for a servable addon interface. */
 export function createRouter(addon: AddonInterface, options: RouterOptions = {}): Router {
   const configureHTML = options.configureHTML ?? renderConfigurePage;
+  const configurationRequired = addon.manifest.behaviorHints?.configurationRequired === true;
 
   function json(status: number, value: unknown, extraHeaders?: Record<string, string>): RouterResponse {
     return {
@@ -60,7 +93,6 @@ export function createRouter(addon: AddonInterface, options: RouterOptions = {})
       body: JSON.stringify(value),
     };
   }
-  const notFound = () => json(404, { err: "not found" });
 
   return async function route(req: RouterRequest): Promise<RouterResponse> {
     const method = req.method.toUpperCase();
@@ -68,73 +100,126 @@ export function createRouter(addon: AddonInterface, options: RouterOptions = {})
     if (method !== "GET") return json(405, { err: "method not allowed" });
 
     const path = req.url.split("?", 1)[0]!;
-    let segments = path.split("/").filter((s) => s.length > 0);
 
-    // Strip the optional leading config segment (any non-reserved first segment).
-    let config: AddonConfig | undefined;
-    if (segments.length > 0 && !RESERVED_ROOT_SEGMENTS.has(segments[0]!)) {
-      config = decodeConfig(segments[0]!);
-      segments = segments.slice(1);
-    }
-
-    if (segments.length === 0) return notFound();
-    const head = segments[0]!;
-
-    if (head === "manifest.json" && segments.length === 1) {
-      return json(200, addon.manifest, cacheControl({ cacheMaxAge: 3600 }));
-    }
-    if (head === "configure" && segments.length === 1) {
-      return {
-        status: 200,
-        headers: { ...CORS_HEADERS, "Content-Type": "text/html; charset=utf-8" },
-        body: configureHTML({ config, manifest: addon.manifest }),
-      };
-    }
-
-    // Resource routes: <resource>/<type>/<id>.json  (+ optional /<extra>.json)
-    const parsed = parseResourcePath(segments);
-    if (!parsed) return notFound();
-    const { resource, type, id, extra: extraSeg } = parsed;
-
-    if (!addon.hasHandler(resource)) return notFound();
-    const extra = parseExtra(extraSeg);
-    const handlers = addon.handlers;
+    // Whether this request carries a secret config segment governs the caching
+    // policy for *every* response below — compute it before any early return.
+    const segmentsAll = path.split("/").filter((s) => s.length > 0);
+    const hasConfigSegment = segmentsAll.length > 0 && !RESERVED_ROOT_SEGMENTS.has(segmentsAll[0]!);
+    const cachePolicy = hasConfigSegment ? NO_STORE : undefined;
 
     try {
-      switch (resource) {
-        case "catalog": {
-          const args: ResourceArgs = { type, id, extra, config };
-          return validated(catalogResponseSchema, await handlers.catalog!(args), "catalog", json);
+      let config: AddonConfig | undefined;
+      let configMalformed = false;
+      let segments = segmentsAll;
+      if (hasConfigSegment) {
+        config = decodeConfig(segments[0]!);
+        // A leading config segment that doesn't decode is malformed. We reject it
+        // (rather than silently downgrade to "unconfigured") — but only once we
+        // know it prefixes a real route, so a lone junk segment stays a 404.
+        configMalformed = config === undefined;
+        segments = segments.slice(1);
+      }
+      const notFound = () => json(404, { err: "not found" }, cachePolicy);
+      const badConfig = () => json(400, { err: "invalid configuration" }, cachePolicy);
+
+      if (segments.length === 0) return notFound();
+      const head = segments[0]!;
+
+      if (head === "manifest.json" && segments.length === 1) {
+        if (configMalformed) return badConfig();
+        // Unconfigured manifest is public; a configured (secret-bearing) one is not.
+        return json(200, addon.manifest, cachePolicy ?? cacheControl({ cacheMaxAge: 3600 }));
+      }
+      if (head === "configure" && segments.length === 1) {
+        if (configMalformed) return badConfig();
+        // The configure page may echo the config back into the form — never cache it.
+        return {
+          status: 200,
+          headers: { ...CORS_HEADERS, "Content-Type": "text/html; charset=utf-8", ...NO_STORE },
+          body: configureHTML({ config, manifest: addon.manifest }),
+        };
+      }
+
+      // Resource routes: <resource>/<type>/<id>.json  (+ optional /<extra>.json)
+      const parsed = parseResourcePath(segments);
+      if (!parsed) return notFound();
+      const { resource, type: rawType, id, extra: extraSeg } = parsed;
+
+      if (!addon.hasHandler(resource)) return notFound();
+      if (configMalformed) return badConfig();
+
+      // Fail closed: a configuration-required addon must never run a handler
+      // without a valid decoded config (else it could fall back to operator creds).
+      if (configurationRequired && config === undefined) {
+        return json(400, { err: "configuration required" }, cachePolicy);
+      }
+
+      const extra = parseExtra(extraSeg);
+      const handlers = addon.handlers;
+
+      try {
+        switch (resource) {
+          case "catalog": {
+            const type = requireContentType(rawType);
+            if (!type) return json(404, { err: "not found" }, cachePolicy);
+            const args: ResourceArgs = { type, id, extra, config };
+            return validated(catalogResponseSchema, await handlers.catalog!(args), cachePolicy);
+          }
+          case "meta": {
+            const type = requireContentType(rawType);
+            if (!type) return json(404, { err: "not found" }, cachePolicy);
+            const args: ResourceArgs = { type, id, extra, config };
+            return validated(metaResponseSchema, await handlers.meta!(args), cachePolicy);
+          }
+          case "stream": {
+            if (rawType !== "track") return json(404, { err: "not found" }, cachePolicy);
+            const reqParse = streamRequestSchema.safeParse({
+              recordingId: id,
+              ...(extra.trackId ? { trackId: extra.trackId } : {}),
+              ...(extra.releaseId ? { releaseId: extra.releaseId } : {}),
+            });
+            if (!reqParse.success) return json(400, { err: "invalid stream request" }, cachePolicy);
+            const args: StreamArgs = { type: "track", config, ...reqParse.data };
+            return validated(streamResponseSchema, await handlers.stream!(args), cachePolicy);
+          }
+          case "lyrics": {
+            if (rawType !== "track") return json(404, { err: "not found" }, cachePolicy);
+            const reqParse = lyricsRequestSchema.safeParse({
+              recordingId: id,
+              ...(extra.trackId ? { trackId: extra.trackId } : {}),
+            });
+            if (!reqParse.success) return json(400, { err: "invalid lyrics request" }, cachePolicy);
+            const args: LyricsArgs = { type: "track", config, ...reqParse.data };
+            return validated(lyricsResponseSchema, await handlers.lyrics!(args), cachePolicy);
+          }
         }
-        case "meta": {
-          const args: ResourceArgs = { type, id, extra, config };
-          return validated(metaResponseSchema, await handlers.meta!(args), "meta", json);
-        }
-        case "stream": {
-          const reqParse = streamRequestSchema.safeParse({
-            recordingId: id,
-            ...(extra.trackId ? { trackId: extra.trackId } : {}),
-            ...(extra.releaseId ? { releaseId: extra.releaseId } : {}),
-          });
-          if (!reqParse.success) return json(400, { err: "invalid stream request", detail: issues(reqParse.error) });
-          const args: StreamArgs = { type, config, ...reqParse.data };
-          return validated(streamResponseSchema, await handlers.stream!(args), "stream", json);
-        }
-        case "lyrics": {
-          const reqParse = lyricsRequestSchema.safeParse({
-            recordingId: id,
-            ...(extra.trackId ? { trackId: extra.trackId } : {}),
-          });
-          if (!reqParse.success) return json(400, { err: "invalid lyrics request", detail: issues(reqParse.error) });
-          const args: LyricsArgs = { type, config, ...reqParse.data };
-          return validated(lyricsResponseSchema, await handlers.lyrics!(args), "lyrics", json);
-        }
+      } catch (err) {
+        // Handler threw: report to diagnostics, return an opaque body (the
+        // exception message can contain the configured credential).
+        options.onError?.(err, { resource, path });
+        return json(500, { err: `${resource} handler failed` }, cachePolicy);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return json(500, { err: `${resource} handler failed`, detail: message });
+      // Malformed percent-encoding (from an id or the extra segment) is a
+      // controlled 400, never an escaped URIError / 500.
+      if (err instanceof BadRequestError || err instanceof URIError) {
+        return json(400, { err: "bad request" }, cachePolicy);
+      }
+      // Unexpected router-level failure: opaque body, diagnostics to the hook.
+      options.onError?.(err, { path });
+      return json(500, { err: "internal error" }, cachePolicy);
     }
   };
+
+  /** Validate a handler's response against its protocol schema; a failure is an addon bug → opaque 500. */
+  function validated(schema: ZodTypeAny, result: unknown, cachePolicy: Record<string, string> | undefined): RouterResponse {
+    const parsed = schema.safeParse(result);
+    if (!parsed.success) {
+      options.onError?.(parsed.error, { path: "" });
+      return json(500, { err: "addon returned an invalid response" }, cachePolicy);
+    }
+    return json(200, parsed.data, cachePolicy ?? cacheControl(parsed.data));
+  }
 }
 
 interface ParsedResourcePath {
@@ -157,7 +242,7 @@ function parseResourcePath(segments: string[]): ParsedResourcePath | undefined {
     return {
       resource: resource as ParsedResourcePath["resource"],
       type: rest[0]!,
-      id: decodeURIComponent(stripJson(rest[1]!)),
+      id: safeDecode(stripJson(rest[1]!)),
     };
   }
   if (rest.length === 3) {
@@ -165,29 +250,29 @@ function parseResourcePath(segments: string[]): ParsedResourcePath | undefined {
     return {
       resource: resource as ParsedResourcePath["resource"],
       type: rest[0]!,
-      id: decodeURIComponent(rest[1]!),
+      id: safeDecode(rest[1]!),
       extra: stripJson(rest[2]!),
     };
   }
   return undefined;
 }
 
+/** `decodeURIComponent` that converts malformed input into a controlled 400. */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw new BadRequestError("malformed percent-encoding");
+  }
+}
+
 function stripJson(s: string): string {
   return s.slice(0, -".json".length);
 }
 
-/** Validate a handler's response against its protocol schema; a failure is an addon bug → 500. */
-function validated(
-  schema: ZodTypeAny,
-  result: unknown,
-  resource: string,
-  json: (status: number, value: unknown, extra?: Record<string, string>) => RouterResponse,
-): RouterResponse {
-  const parsed = schema.safeParse(result);
-  if (!parsed.success) {
-    return json(500, { err: `addon returned an invalid ${resource} response`, detail: issues(parsed.error) });
-  }
-  return json(200, parsed.data, cacheControl(parsed.data));
+function requireContentType(type: string): ContentType | undefined {
+  const parsed = contentTypeSchema.safeParse(type);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function cacheControl(value: unknown): Record<string, string> {
@@ -198,8 +283,4 @@ function cacheControl(value: unknown): Record<string, string> {
   if (typeof v.staleRevalidate === "number") parts.push(`stale-while-revalidate=${v.staleRevalidate}`);
   if (typeof v.staleError === "number") parts.push(`stale-if-error=${v.staleError}`);
   return parts.length > 0 ? { "Cache-Control": parts.join(", ") } : {};
-}
-
-function issues(error: { issues: { path: (string | number)[]; message: string }[] }): string {
-  return error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
 }

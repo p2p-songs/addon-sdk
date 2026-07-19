@@ -33,9 +33,12 @@ export function serveHTTP(addon: AddonInterface, options: ServeOptions = {}): Pr
         res.end(r.body);
       })
       .catch((err: unknown) => {
-        const detail = err instanceof Error ? err.message : String(err);
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ err: "internal error", detail }));
+        // The router resolves for all normal errors; this only fires on an
+        // adapter-level failure. Report to diagnostics, return an opaque body —
+        // the error may contain a configured credential (audit A-005).
+        options.onError?.(err, { path: req.url ?? "" });
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store, private" });
+        res.end(JSON.stringify({ err: "internal error" }));
       });
   });
 

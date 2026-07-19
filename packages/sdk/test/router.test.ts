@@ -93,7 +93,8 @@ describe("router — resource routing", () => {
       .getInterface();
     const r = await createRouter(addon)({ method: "GET", url: `/stream/track/${enc(REC)}.json` });
     expect(r.status).toBe(500);
-    expect(JSON.parse(r.body).err).toMatch(/invalid stream response/);
+    expect(JSON.parse(r.body).err).toMatch(/invalid response/);
+    expect(JSON.parse(r.body).detail).toBeUndefined();
   });
 
   it("500s when a handler throws", async () => {
@@ -105,17 +106,20 @@ describe("router — resource routing", () => {
       .getInterface();
     const r = await createRouter(addon)({ method: "GET", url: `/stream/track/${enc(REC)}.json` });
     expect(r.status).toBe(500);
-    expect(JSON.parse(r.body).detail).toBe("boom");
+    // Opaque body — the exception message never reaches the client (A-005).
+    expect(JSON.parse(r.body).detail).toBeUndefined();
+    expect(r.body).not.toContain("boom");
   });
 });
 
 describe("router — /configure round-trip", () => {
   it("decodes the leading config segment and hands it to the handler", async () => {
     let received: AddonConfig | undefined;
+    // A configurable (but not required) addon, so the unconfigured call still runs.
     const addon = new AddonBuilder({
       id: "x", version: "0.1.0", name: "X", description: "",
       resources: ["stream"], types: ["track"],
-      behaviorHints: { configurable: true, configurationRequired: true },
+      behaviorHints: { configurable: true },
     })
       .defineStreamHandler(({ config }) => {
         received = config;
@@ -129,7 +133,8 @@ describe("router — /configure round-trip", () => {
     expect(r.status).toBe(200);
     expect(received).toEqual({ debridKey: "RD-secret" });
 
-    // Unconfigured install: same route, no leading segment → no config.
+    // Unconfigured install: same route, no leading segment → config is undefined.
+    received = { sentinel: true };
     await route({ method: "GET", url: `/stream/track/${enc(REC)}.json` });
     expect(received).toBeUndefined();
   });

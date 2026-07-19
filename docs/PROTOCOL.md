@@ -204,7 +204,13 @@ Each stream carries **exactly one** source:
   non-`200`, non-JSON, or schema-invalid response as "this addon contributed
   nothing" and moves on to the next addon; one addon failing never blocks
   playback.
-- Unknown routes → `404`.
+- Unknown routes, an unknown/invalid content `type`, or `stream`/`lyrics`
+  addressed with a non-`track` type → `404`. Malformed input (bad
+  percent-encoding, an invalid stream/lyrics request, a corrupt config prefix)
+  → `4xx`, never an uncaught server error.
+- **Error bodies are opaque.** A failure response carries only a stable `err`
+  string — never a handler or provider exception message, which can contain the
+  configured credential. Diagnostic detail stays server-side (audit A-005).
 
 ---
 
@@ -216,9 +222,19 @@ indexer choices) sets `behaviorHints.configurable: true` and serves a
 and read back out of the path on every subsequent request — there is no
 server-side account system. Concretely, the configured install URL looks like
 `https://addon.example/<encoded-config>/manifest.json`, and the same
-`<encoded-config>` segment prefixes that install's resource routes. An addon
-with `configurationRequired: true` should refuse to serve resources (or serve
-empty) until configured.
+`<encoded-config>` segment prefixes that install's resource routes.
+
+Because that segment carries a **secret** (audit A-005):
+
+- A request whose path includes a config segment is **secret-bearing**. Its
+  manifest, `/configure`, and resource responses are served `Cache-Control:
+  no-store, private` — never shared/public caching, regardless of a handler's
+  cache hints. (Unconfigured requests keep normal caching.)
+- `configurationRequired: true` **fails closed**: the SDK rejects a resource
+  request (`400`) unless a valid config was decoded — a handler is never invoked
+  without credentials, so it can never fall back to an operator-owned account.
+- A config segment that does not decode is a `400`, not a silent downgrade to
+  "unconfigured".
 
 `<encoded-config>` is the **base64url of the config JSON** (no `/`, no `=`
 padding, so it is a single path-safe segment). The router treats a leading path
