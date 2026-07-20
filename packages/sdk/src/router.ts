@@ -28,6 +28,9 @@ import {
   streamRequestSchema,
   lyricsRequestSchema,
   contentTypeSchema,
+  isEntity,
+  isPlaylistId,
+  ISRC_ID_RE,
   type ContentType,
 } from "@p2p-songs/protocol";
 import type { ZodTypeAny } from "zod";
@@ -95,17 +98,19 @@ export function createRouter(addon: AddonInterface, options: RouterOptions = {})
   }
 
   return async function route(req: RouterRequest): Promise<RouterResponse> {
-    const method = req.method.toUpperCase();
-    if (method === "OPTIONS") return { status: 204, headers: CORS_HEADERS, body: "" };
-    if (method !== "GET") return json(405, { err: "method not allowed" });
-
     const path = req.url.split("?", 1)[0]!;
 
     // Whether this request carries a secret config segment governs the caching
-    // policy for *every* response below — compute it before any early return.
+    // policy for *every* response below — including OPTIONS and method rejection.
+    // Must be computed BEFORE any early return so no secret-bearing path can be
+    // answered with a cacheable response (audit A-006).
     const segmentsAll = path.split("/").filter((s) => s.length > 0);
     const hasConfigSegment = segmentsAll.length > 0 && !RESERVED_ROOT_SEGMENTS.has(segmentsAll[0]!);
     const cachePolicy = hasConfigSegment ? NO_STORE : undefined;
+
+    const method = req.method.toUpperCase();
+    if (method === "OPTIONS") return { status: 204, headers: { ...CORS_HEADERS, ...cachePolicy }, body: "" };
+    if (method !== "GET") return json(405, { err: "method not allowed" }, cachePolicy);
 
     try {
       let config: AddonConfig | undefined;
@@ -167,7 +172,11 @@ export function createRouter(addon: AddonInterface, options: RouterOptions = {})
           }
           case "meta": {
             const type = requireContentType(rawType);
-            if (!type) return json(404, { err: "not found" }, cachePolicy);
+            // Validate the route type ↔ id identity on the *input* side, mirroring
+            // the discriminated response schema — a contradictory pair (e.g.
+            // /meta/artist/mbid:recording:…) is a 404, never a handler call
+            // (audit A-006).
+            if (!type || !metaIdMatchesType(type, id)) return json(404, { err: "not found" }, cachePolicy);
             const args: ResourceArgs = { type, id, extra, config };
             return validated(metaResponseSchema, await handlers.meta!(args), cachePolicy);
           }
@@ -273,6 +282,20 @@ function stripJson(s: string): string {
 function requireContentType(type: string): ContentType | undefined {
   const parsed = contentTypeSchema.safeParse(type);
   return parsed.success ? parsed.data : undefined;
+}
+
+/** Does a `meta` route's content type agree with its id's namespace? (Input mirror of the response schema.) */
+function metaIdMatchesType(type: ContentType, id: string): boolean {
+  switch (type) {
+    case "artist":
+      return isEntity(id, "artist");
+    case "album":
+      return isEntity(id, "release");
+    case "track":
+      return isEntity(id, "recording") || ISRC_ID_RE.test(id);
+    case "playlist":
+      return isPlaylistId(id);
+  }
 }
 
 function cacheControl(value: unknown): Record<string, string> {

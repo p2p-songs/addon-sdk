@@ -208,6 +208,11 @@ Each stream carries **exactly one** source:
   addressed with a non-`track` type → `404`. Malformed input (bad
   percent-encoding, an invalid stream/lyrics request, a corrupt config prefix)
   → `4xx`, never an uncaught server error.
+- A `meta` route's `type` must agree with its `id`'s namespace — `artist`↔artist
+  MBID, `album`↔release MBID, `track`↔recording MBID/ISRC, `playlist`↔playlist
+  id. A contradictory pair (e.g. `/meta/artist/mbid:recording:…`) is a `404`,
+  never a handler call (the input mirror of the meta response's discriminated
+  union — audit A-006).
 - **Error bodies are opaque.** A failure response carries only a stable `err`
   string — never a handler or provider exception message, which can contain the
   configured credential. Diagnostic detail stays server-side (audit A-005).
@@ -226,10 +231,13 @@ server-side account system. Concretely, the configured install URL looks like
 
 Because that segment carries a **secret** (audit A-005):
 
-- A request whose path includes a config segment is **secret-bearing**. Its
-  manifest, `/configure`, and resource responses are served `Cache-Control:
-  no-store, private` — never shared/public caching, regardless of a handler's
-  cache hints. (Unconfigured requests keep normal caching.)
+- A request whose path includes a config segment is **secret-bearing**. **Every**
+  response for it — manifest, `/configure`, resource, **and even an `OPTIONS`
+  preflight or `405` method rejection** — is served `Cache-Control: no-store,
+  private`, never shared/public caching, regardless of a handler's cache hints.
+  (Unconfigured requests keep normal caching.) The secret-bearing detection runs
+  before any early return, so no method/route shortcut can leak a cacheable
+  response for a URL that contains the key (audit A-006).
 - `configurationRequired: true` **fails closed**: the SDK rejects a resource
   request (`400`) unless a valid config was decoded — a handler is never invoked
   without credentials, so it can never fall back to an operator-owned account.

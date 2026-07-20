@@ -51,6 +51,59 @@ describe("[CRIT-1] secret-bearing configured paths are never public-cacheable", 
     const r = await streamAddon({})({ method: "GET", url: `/manifest.json` });
     expect(r.headers["Cache-Control"]).toContain("public");
   });
+
+  // A-006: the secret-bearing check must run before method/OPTIONS early-returns,
+  // so even a 405/204 on a configured path is no-store.
+  it("configured non-GET (405) and OPTIONS (204) are still no-store", async () => {
+    const route = streamAddon({});
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const r = await route({ method, url: `/${seg}/stream/track/${enc(REC)}.json` });
+      expect(r.status).toBe(405);
+      expect(r.headers["Cache-Control"]).toBe("no-store, private");
+    }
+    const opt = await route({ method: "OPTIONS", url: `/${seg}/manifest.json` });
+    expect(opt.status).toBe(204);
+    expect(opt.headers["Cache-Control"]).toBe("no-store, private");
+  });
+
+  it("unconfigured 405/OPTIONS carry no secret cache policy", async () => {
+    const route = streamAddon({});
+    expect((await route({ method: "POST", url: `/manifest.json` })).headers["Cache-Control"]).toBeUndefined();
+    expect((await route({ method: "OPTIONS", url: `/manifest.json` })).headers["Cache-Control"]).toBeUndefined();
+  });
+});
+
+describe("[A-006] meta route type↔id identity is validated on input", () => {
+  function metaAddon() {
+    const addon = new AddonBuilder({
+      id: "m", version: "0.1.0", name: "M", description: "",
+      resources: ["meta"], types: ["artist", "album", "track"],
+    })
+      .defineMetaHandler(({ id, type }) => ({ meta: metaFor(type, id) }))
+      .getInterface();
+    return createRouter(addon);
+  }
+  // Minimal valid meta per type (the handler is only reached on a matching pair).
+  function metaFor(type: string, id: string): Record<string, unknown> {
+    return { type, id, name: "x" };
+  }
+  const ARTIST = "mbid:artist:cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const RELEASE = "mbid:release:bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  it("accepts matching type/id pairs", async () => {
+    const route = metaAddon();
+    expect((await route({ method: "GET", url: `/meta/artist/${enc(ARTIST)}.json` })).status).toBe(200);
+    expect((await route({ method: "GET", url: `/meta/album/${enc(RELEASE)}.json` })).status).toBe(200);
+    expect((await route({ method: "GET", url: `/meta/track/${enc(REC)}.json` })).status).toBe(200);
+  });
+
+  it("rejects contradictory pairs with 404 (no handler call)", async () => {
+    const route = metaAddon();
+    // artist route with a recording id — the exact A-006 probe.
+    expect((await route({ method: "GET", url: `/meta/artist/${enc(REC)}.json` })).status).toBe(404);
+    expect((await route({ method: "GET", url: `/meta/album/${enc(REC)}.json` })).status).toBe(404);
+    expect((await route({ method: "GET", url: `/meta/track/${enc(RELEASE)}.json` })).status).toBe(404);
+  });
 });
 
 describe("[CRIT-2] handler/router exceptions never disclose the credential", () => {

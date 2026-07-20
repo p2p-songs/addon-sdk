@@ -82,12 +82,16 @@ protocol response schema (a bad response is the addon's bug → 500); cache hint
 **Security posture at this boundary (audit A-005 — do NOT loosen):** the router
 is the credential-carrying trust boundary every addon inherits.
 - A request with a config segment is **secret-bearing** → manifest, configure,
-  and resource responses are `Cache-Control: no-store, private`, never public.
+  resource, **and even OPTIONS/405** responses are `Cache-Control: no-store,
+  private`, never public. The detection runs before any method/early-return
+  (audit A-006), so no shortcut leaks a cacheable secret-bearing response.
 - Client error bodies are **opaque** (`{ err }` only) — a handler/provider
   exception message can contain the debrid key, so it never reaches the client;
   diagnostics go only to the opt-in `onError` hook (implementer redacts).
 - Route content `type` is validated: `stream`/`lyrics` require `track`,
-  `catalog`/`meta` require a protocol `ContentType`, else 404.
+  `catalog`/`meta` require a protocol `ContentType`, else 404. **`meta`
+  additionally validates type↔id identity** (artist↔artist MBID, album↔release,
+  track↔recording/ISRC, playlist↔playlist) → 404 on mismatch (audit A-006).
 - `configurationRequired` **fails closed** (400 without a valid config); a
   malformed config prefix is a 400, not a silent downgrade.
 - Malformed percent-encoding → controlled 400, never an escaped `URIError`/500.
@@ -107,8 +111,10 @@ guards, router routing/validation/CORS, live `serveHTTP` hello-world over HTTP).
 findings fixed: secret-bearing paths are `no-store, private` (never public);
 error bodies opaque + `onError` diagnostics hook; route content types validated;
 `configurationRequired` fails closed + malformed config → 400; malformed
-percent-encoding → 400. 32 SDK tests (10 new A-005 regressions in
-`test/security.test.ts`); 78 total; built-package probes green. Next: Phase 3 —
+percent-encoding → 400. **A-006 (2026-07-20) added two more SDK fixes:**
+configured 405/OPTIONS are also no-store (secret detection before every
+early-return), and `meta` route type↔id identity is validated on input (404 on
+mismatch). 36 SDK tests; built-package probes green. Next: Phase 3 —
 reference addons in the `addons` repo (`stream-legal` first — no debrid/config,
 gives the first end-to-end slice).
 
