@@ -73,6 +73,12 @@ This repo is a **pnpm workspace**. `packages/protocol` = `@p2p-songs/protocol`
 take one dependency. Tooling: TypeScript, zod, vitest.
 
 Router invariants (don't regress): CORS on every response + `OPTIONS` 204;
+a preflight carrying `Access-Control-Request-Private-Network: true` is answered
+with the matching opt-in, because a **hosted player fetching an addon the user
+runs on their own machine is a public→private request Chrome otherwise blocks** —
+that pairing is how a credential-bearing addon keeps the user's key on their own
+hardware, so it can't be treated as an edge case (`RouterRequest.headers` exists
+for this and nothing else);
 leading non-reserved path segment = base64url config → `config` handler arg;
 `stream`/`lyrics` keyed by a validated `mbid:recording:` id (400 otherwise),
 album context from `<extra>`; every handler response validated against the

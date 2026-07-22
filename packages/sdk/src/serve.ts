@@ -27,7 +27,7 @@ export function serveHTTP(addon: AddonInterface, options: ServeOptions = {}): Pr
   const router = createRouter(addon, options);
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    router({ method: req.method ?? "GET", url: req.url ?? "/" })
+    router({ method: req.method ?? "GET", url: req.url ?? "/", headers: req.headers })
       .then((r) => {
         res.writeHead(r.status, r.headers);
         res.end(r.body);

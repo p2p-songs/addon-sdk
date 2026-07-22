@@ -40,6 +40,36 @@ describe("router — transport + CORS", () => {
     expect(r.headers["Access-Control-Allow-Methods"]).toContain("GET");
   });
 
+  /**
+   * A hosted player reaching an addon the user runs on their own machine is a
+   * public→private request, which Chrome refuses unless the preflight opts in.
+   * That pairing is the point of a self-hosted credential-bearing addon, so the
+   * opt-in is required — and it must be scoped to the preflight that asks.
+   */
+  it("opts in to a Private Network Access preflight, and only when asked", async () => {
+    const asked = await route({
+      method: "OPTIONS",
+      url: "/stream/track/x.json",
+      headers: { "Access-Control-Request-Private-Network": "true" }, // adapters may not lowercase
+    });
+    expect(asked.headers["Access-Control-Allow-Private-Network"]).toBe("true");
+
+    const plain = await route({ method: "OPTIONS", url: "/stream/track/x.json" });
+    expect(plain.headers["Access-Control-Allow-Private-Network"]).toBeUndefined();
+
+    const get = await route({ method: "GET", url: "/manifest.json" });
+    expect(get.headers["Access-Control-Allow-Private-Network"]).toBeUndefined();
+  });
+
+  it("does not opt in for a header value other than true", async () => {
+    const r = await route({
+      method: "OPTIONS",
+      url: "/stream/track/x.json",
+      headers: { "access-control-request-private-network": "false" },
+    });
+    expect(r.headers["Access-Control-Allow-Private-Network"]).toBeUndefined();
+  });
+
   it("404s unknown routes and rejects non-GET", async () => {
     expect((await route({ method: "GET", url: "/nope" })).status).toBe(404);
     expect((await route({ method: "POST", url: "/manifest.json" })).status).toBe(405);

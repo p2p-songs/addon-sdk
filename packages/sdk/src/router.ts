@@ -43,6 +43,12 @@ export interface RouterRequest {
   method: string;
   /** Request path (with optional query), e.g. `/stream/track/mbid%3Arecording%3A….json`. */
   url: string;
+  /**
+   * Request headers, if the adapter has them. Optional: the router's behaviour
+   * is determined by method and path alone, and only the Private Network Access
+   * preflight (below) consults these. Names are matched case-insensitively.
+   */
+  headers?: Record<string, string | string[] | undefined>;
 }
 
 export interface RouterResponse {
@@ -79,6 +85,37 @@ const CORS_HEADERS: Record<string, string> = {
 /** Caching policy for responses whose request URL carries a secret config segment. */
 const NO_STORE: Record<string, string> = { "Cache-Control": "no-store, private" };
 
+/**
+ * Private Network Access: a page on a public origin that fetches an addon on
+ * loopback or a LAN address must first pass a preflight that Chrome answers
+ * only if the response opts in with this header.
+ *
+ * That pairing is not an edge case — it is the deployment we want most. An
+ * addon holding the user's debrid key is best run on the user's own machine
+ * (`http://127.0.0.1:7003`), and a hosted player is still an ordinary public
+ * origin, so every request it makes to that addon is a public→private one.
+ * Without this header the browser blocks it and reports a bare CORS failure
+ * that looks like an addon bug.
+ *
+ * Granting it is not a new exposure: the addon already answers any origin
+ * (`Access-Control-Allow-Origin: *`) because it serves public catalogue data,
+ * and its credential-bearing routes are guarded by an unguessable config
+ * segment, not by who is asking. This only restores that same policy for a
+ * caller the browser would otherwise pre-emptively refuse.
+ */
+const PNA_REQUEST_HEADER = "access-control-request-private-network";
+const PNA_RESPONSE_HEADER: Record<string, string> = { "Access-Control-Allow-Private-Network": "true" };
+
+/** Case-insensitive single-value header lookup over an adapter's header bag. */
+function header(headers: RouterRequest["headers"], name: string): string | undefined {
+  if (!headers) return undefined;
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== name) continue;
+    return Array.isArray(value) ? value[0] : value;
+  }
+  return undefined;
+}
+
 /** Raised for malformed input that must surface as a controlled 400. */
 class BadRequestError extends Error {}
 
@@ -109,7 +146,12 @@ export function createRouter(addon: AddonInterface, options: RouterOptions = {})
     const cachePolicy = hasConfigSegment ? NO_STORE : undefined;
 
     const method = req.method.toUpperCase();
-    if (method === "OPTIONS") return { status: 204, headers: { ...CORS_HEADERS, ...cachePolicy }, body: "" };
+    if (method === "OPTIONS") {
+      // Opt in only when asked, so the header appears on the preflight that
+      // needs it rather than on every response.
+      const pna = header(req.headers, PNA_REQUEST_HEADER) === "true" ? PNA_RESPONSE_HEADER : undefined;
+      return { status: 204, headers: { ...CORS_HEADERS, ...pna, ...cachePolicy }, body: "" };
+    }
     if (method !== "GET") return json(405, { err: "method not allowed" }, cachePolicy);
 
     try {
